@@ -1,0 +1,12 @@
+@import "tailwindcss";
+
+body {
+  background: #09090b;
+  color: #fafafa;
+  font-family: var(--font-geist, Arial, Helvetica, sans-serif);
+}
+
+/* iOS safe-area bottom padding for the controls bar */
+.safe-area-pb {
+  padding-bottom: calc(1.25rem + env(safe-area-inset-bottom));
+}
