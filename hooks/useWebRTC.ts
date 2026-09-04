@@ -1,7 +1,8 @@
 'use client'
 
 import { useEffect, useRef, useCallback, useState } from 'react'
-import type { Socket } from 'socket.io-client'
+import type { PresenceChannel } from 'pusher-js'
+import { getPusherClient } from '@/lib/pusher-client'
 
 const FALLBACK_ICE: RTCIceServer[] = [
   { urls: 'stun:stun.l.google.com:19302' },
@@ -12,120 +13,151 @@ async function fetchIceServers(): Promise<RTCIceServer[]> {
   try {
     const res = await fetch('/api/turn')
     if (!res.ok) return FALLBACK_ICE
-    const servers = await res.json() as RTCIceServer[]
+    const servers = (await res.json()) as RTCIceServer[]
     return servers.length > 0 ? servers : FALLBACK_ICE
   } catch {
     return FALLBACK_ICE
   }
 }
 
-interface UseWebRTCProps {
-  roomId: string
-  socket: Socket | null
-}
-
-export function useWebRTC({ roomId, socket }: UseWebRTCProps) {
+export function useWebRTC({ roomId }: { roomId: string }) {
   const localVideoRef = useRef<HTMLVideoElement>(null)
   const remoteVideoRef = useRef<HTMLVideoElement>(null)
   const peerConnectionRef = useRef<RTCPeerConnection | null>(null)
   const localStreamRef = useRef<MediaStream | null>(null)
   const pendingCandidates = useRef<RTCIceCandidateInit[]>([])
   const iceServersRef = useRef<RTCIceServer[]>(FALLBACK_ICE)
+  const channelRef = useRef<PresenceChannel | null>(null)
+  // flag: subscription_succeeded fired before stream was ready
+  const pendingOfferRef = useRef(false)
 
   const [isMuted, setIsMuted] = useState(false)
   const [isCameraOff, setIsCameraOff] = useState(false)
   const [isConnected, setIsConnected] = useState(false)
   const [isRemoteConnected, setIsRemoteConnected] = useState(false)
+  const [isPeerJoined, setIsPeerJoined] = useState(false)
   const [facingMode, setFacingMode] = useState<'user' | 'environment'>('user')
   const [mediaError, setMediaError] = useState<string | null>(null)
 
   const getLocalStream = useCallback(async (facing: 'user' | 'environment') => {
-    const stream = await navigator.mediaDevices.getUserMedia({
+    return navigator.mediaDevices.getUserMedia({
       video: { facingMode: facing, width: { ideal: 1280 }, height: { ideal: 720 } },
       audio: { echoCancellation: true, noiseSuppression: true },
     })
-    return stream
   }, [])
 
-  const createPeerConnection = useCallback(
-    (targetId: string): RTCPeerConnection => {
-      if (peerConnectionRef.current) {
-        peerConnectionRef.current.close()
+  const createPeerConnection = useCallback((channel: PresenceChannel): RTCPeerConnection => {
+    peerConnectionRef.current?.close()
+
+    const pc = new RTCPeerConnection({ iceServers: iceServersRef.current })
+    peerConnectionRef.current = pc
+
+    localStreamRef.current?.getTracks().forEach((track) => {
+      pc.addTrack(track, localStreamRef.current!)
+    })
+
+    pc.ontrack = (event) => {
+      const stream = event.streams[0] ?? new MediaStream([event.track])
+      if (remoteVideoRef.current) remoteVideoRef.current.srcObject = stream
+      setIsRemoteConnected(true)
+      setIsPeerJoined(true)
+    }
+
+    pc.onicecandidate = (event) => {
+      if (event.candidate) {
+        channel.trigger('client-ice', { candidate: event.candidate.toJSON() })
       }
+    }
 
-      const pc = new RTCPeerConnection({ iceServers: iceServersRef.current })
-      peerConnectionRef.current = pc
-
-      localStreamRef.current?.getTracks().forEach((track) => {
-        pc.addTrack(track, localStreamRef.current!)
-      })
-
-      pc.ontrack = (event) => {
-        if (remoteVideoRef.current && event.streams[0]) {
-          remoteVideoRef.current.srcObject = event.streams[0]
-          setIsRemoteConnected(true)
-        }
+    pc.onconnectionstatechange = () => {
+      const state = pc.connectionState
+      if (state === 'connected') setIsConnected(true)
+      if (state === 'disconnected' || state === 'failed' || state === 'closed') {
+        setIsConnected(false)
+        setIsRemoteConnected(false)
       }
+    }
 
-      pc.onicecandidate = (event) => {
-        if (event.candidate && socket) {
-          socket.emit('ice-candidate', { to: targetId, candidate: event.candidate.toJSON() })
-        }
-      }
+    return pc
+  }, [])
 
-      pc.onconnectionstatechange = () => {
-        if (pc.connectionState === 'connected') setIsConnected(true)
-        if (pc.connectionState === 'disconnected' || pc.connectionState === 'failed') {
-          setIsConnected(false)
-          setIsRemoteConnected(false)
-        }
-      }
-
-      return pc
-    },
-    [socket],
-  )
+  const sendOffer = useCallback(async (channel: PresenceChannel) => {
+    const pc = createPeerConnection(channel)
+    const offer = await pc.createOffer()
+    await pc.setLocalDescription(offer)
+    channel.trigger('client-offer', { offer })
+  }, [createPeerConnection])
 
   useEffect(() => {
-    if (!socket || !roomId) return
     let mounted = true
+    const pusher = getPusherClient()
+    const channelName = `presence-room-${roomId}`
+    const channel = pusher.subscribe(channelName) as PresenceChannel
+    channelRef.current = channel
 
     const init = async () => {
       try {
-        // fetch Metered TURN credentials before doing anything else
         const [stream, iceServers] = await Promise.all([
           getLocalStream('user'),
           fetchIceServers(),
         ])
-
         if (!mounted) {
           stream.getTracks().forEach((t) => t.stop())
           return
         }
-
         iceServersRef.current = iceServers
         localStreamRef.current = stream
         if (localVideoRef.current) localVideoRef.current.srcObject = stream
-        socket.emit('join-room', roomId)
+
+        // subscription_succeeded already fired and flagged us
+        if (pendingOfferRef.current && channelRef.current) {
+          pendingOfferRef.current = false
+          await sendOffer(channelRef.current)
+        }
       } catch {
-        if (mounted) setMediaError('Camera/mic access denied. Please allow permissions and reload.')
+        if (mounted) setMediaError('Camera or microphone access was denied. Please allow permissions and reload.')
       }
     }
 
     init()
 
-    const handleRoomJoined = async ({ otherUsers }: { otherUsers: string[] }) => {
-      if (otherUsers.length > 0) {
-        const targetId = otherUsers[0]
-        const pc = createPeerConnection(targetId)
-        const offer = await pc.createOffer()
-        await pc.setLocalDescription(offer)
-        socket.emit('offer', { to: targetId, offer })
+    // fires once on join — count includes ourselves
+    channel.bind('pusher:subscription_succeeded', async (members: { count: number }) => {
+      if (members.count > 2) {
+        setMediaError('This room already has 2 people in it.')
+        pusher.unsubscribe(channelName)
+        return
       }
-    }
+      if (members.count === 2) {
+        // we're the second to join — we create the offer
+        setIsPeerJoined(true)
+        if (localStreamRef.current) {
+          await sendOffer(channel)
+        } else {
+          pendingOfferRef.current = true
+        }
+      }
+    })
 
-    const handleOffer = async ({ from, offer }: { from: string; offer: RTCSessionDescriptionInit }) => {
-      const pc = createPeerConnection(from)
+    // fires on the first person when the second joins
+    channel.bind('pusher:member_added', () => {
+      setIsPeerJoined(true)
+    })
+
+    // fires when the other person leaves
+    channel.bind('pusher:member_removed', () => {
+      setIsPeerJoined(false)
+      setIsRemoteConnected(false)
+      setIsConnected(false)
+      if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null
+      peerConnectionRef.current?.close()
+      peerConnectionRef.current = null
+      pendingCandidates.current = []
+    })
+
+    channel.bind('client-offer', async ({ offer }: { offer: RTCSessionDescriptionInit }) => {
+      setIsPeerJoined(true)
+      const pc = createPeerConnection(channel)
       await pc.setRemoteDescription(new RTCSessionDescription(offer))
       for (const c of pendingCandidates.current) {
         await pc.addIceCandidate(new RTCIceCandidate(c))
@@ -133,10 +165,10 @@ export function useWebRTC({ roomId, socket }: UseWebRTCProps) {
       pendingCandidates.current = []
       const answer = await pc.createAnswer()
       await pc.setLocalDescription(answer)
-      socket.emit('answer', { to: from, answer })
-    }
+      channel.trigger('client-answer', { answer })
+    })
 
-    const handleAnswer = async ({ answer }: { answer: RTCSessionDescriptionInit }) => {
+    channel.bind('client-answer', async ({ answer }: { answer: RTCSessionDescriptionInit }) => {
       if (peerConnectionRef.current) {
         await peerConnectionRef.current.setRemoteDescription(new RTCSessionDescription(answer))
         for (const c of pendingCandidates.current) {
@@ -144,64 +176,35 @@ export function useWebRTC({ roomId, socket }: UseWebRTCProps) {
         }
         pendingCandidates.current = []
       }
-    }
+    })
 
-    const handleIceCandidate = async ({ candidate }: { candidate: RTCIceCandidateInit }) => {
+    channel.bind('client-ice', async ({ candidate }: { candidate: RTCIceCandidateInit }) => {
       const pc = peerConnectionRef.current
       if (pc && pc.remoteDescription) {
-        await pc.addIceCandidate(new RTCIceCandidate(candidate))
+        try { await pc.addIceCandidate(new RTCIceCandidate(candidate)) } catch { /* stale */ }
       } else {
         pendingCandidates.current.push(candidate)
       }
-    }
-
-    const handleUserLeft = () => {
-      setIsRemoteConnected(false)
-      setIsConnected(false)
-      if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null
-      peerConnectionRef.current?.close()
-      peerConnectionRef.current = null
-    }
-
-    const handleRoomFull = () => {
-      setMediaError('Room is full. Maximum 2 participants allowed.')
-    }
-
-    socket.on('room-joined', handleRoomJoined)
-    socket.on('offer', handleOffer)
-    socket.on('answer', handleAnswer)
-    socket.on('ice-candidate', handleIceCandidate)
-    socket.on('user-left', handleUserLeft)
-    socket.on('room-full', handleRoomFull)
+    })
 
     return () => {
       mounted = false
-      socket.off('room-joined', handleRoomJoined)
-      socket.off('offer', handleOffer)
-      socket.off('answer', handleAnswer)
-      socket.off('ice-candidate', handleIceCandidate)
-      socket.off('user-left', handleUserLeft)
-      socket.off('room-full', handleRoomFull)
+      pusher.unsubscribe(channelName)
+      channelRef.current = null
       localStreamRef.current?.getTracks().forEach((t) => t.stop())
       peerConnectionRef.current?.close()
       peerConnectionRef.current = null
     }
-  }, [socket, roomId, createPeerConnection, getLocalStream])
+  }, [roomId, createPeerConnection, getLocalStream, sendOffer])
 
   const toggleMute = useCallback(() => {
     const track = localStreamRef.current?.getAudioTracks()[0]
-    if (track) {
-      track.enabled = !track.enabled
-      setIsMuted(!track.enabled)
-    }
+    if (track) { track.enabled = !track.enabled; setIsMuted(!track.enabled) }
   }, [])
 
   const toggleCamera = useCallback(() => {
     const track = localStreamRef.current?.getVideoTracks()[0]
-    if (track) {
-      track.enabled = !track.enabled
-      setIsCameraOff(!track.enabled)
-    }
+    if (track) { track.enabled = !track.enabled; setIsCameraOff(!track.enabled) }
   }, [])
 
   const flipCamera = useCallback(async () => {
@@ -210,15 +213,12 @@ export function useWebRTC({ roomId, socket }: UseWebRTCProps) {
     try {
       const newStream = await getLocalStream(newFacing)
       if (localVideoRef.current) localVideoRef.current.srcObject = newStream
-
       const newVideoTrack = newStream.getVideoTracks()[0]
       const sender = peerConnectionRef.current?.getSenders().find((s) => s.track?.kind === 'video')
       if (sender) await sender.replaceTrack(newVideoTrack)
-
       localStreamRef.current?.getVideoTracks()[0].stop()
       const audio = localStreamRef.current?.getAudioTracks()[0]
-      const combined = new MediaStream([...(audio ? [audio] : []), newVideoTrack])
-      localStreamRef.current = combined
+      localStreamRef.current = new MediaStream([...(audio ? [audio] : []), newVideoTrack])
     } catch {
       setFacingMode(facingMode)
     }
@@ -231,6 +231,7 @@ export function useWebRTC({ roomId, socket }: UseWebRTCProps) {
     isCameraOff,
     isConnected,
     isRemoteConnected,
+    isPeerJoined,
     mediaError,
     toggleMute,
     toggleCamera,
