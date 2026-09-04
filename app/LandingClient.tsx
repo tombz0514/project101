@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { v4 as uuidv4 } from 'uuid'
+import { Video, LogIn, Plus } from 'lucide-react'
 
 export default function LandingClient() {
   const router = useRouter()
@@ -16,31 +17,28 @@ export default function LandingClient() {
 
   const joinRoom = () => {
     const id = roomInput.trim()
-    if (!id) {
-      setError('Please enter a room code.')
-      return
-    }
+    if (!id) { setError('Please enter a room code.'); return }
     router.push(`/room/${id}`)
   }
 
   return (
     <main className="flex flex-1 flex-col items-center justify-center px-6 py-16">
-      {/* Logo / brand */}
+      {/* Brand */}
       <div className="mb-10 flex flex-col items-center gap-3">
-        <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-violet-600 text-3xl shadow-lg shadow-violet-500/30">
-          📹
+        <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-violet-600 shadow-lg shadow-violet-500/30">
+          <Video className="h-8 w-8 text-white" strokeWidth={1.75} />
         </div>
         <h1 className="text-3xl font-bold tracking-tight">VideoCall</h1>
-        <p className="text-sm text-zinc-400">Peer-to-peer · No sign-up · Works on iOS &amp; Android</p>
+        <p className="text-sm text-zinc-400">Peer-to-peer · No sign-up · iOS &amp; Android</p>
       </div>
 
       {/* Card */}
       <div className="w-full max-w-sm rounded-2xl bg-zinc-900 p-8 shadow-2xl ring-1 ring-white/10">
-        {/* Create */}
         <button
           onClick={createRoom}
-          className="mb-6 w-full rounded-xl bg-violet-600 py-3.5 text-sm font-semibold tracking-wide transition hover:bg-violet-500 active:scale-95"
+          className="mb-6 flex w-full items-center justify-center gap-2 rounded-xl bg-violet-600 py-3.5 text-sm font-semibold tracking-wide transition hover:bg-violet-500 active:scale-95"
         >
+          <Plus className="h-4 w-4" />
           Create a new room
         </button>
 
@@ -50,7 +48,6 @@ export default function LandingClient() {
           <div className="h-px flex-1 bg-zinc-700" />
         </div>
 
-        {/* Join */}
         <div className="flex flex-col gap-3">
           <input
             type="text"
@@ -63,8 +60,9 @@ export default function LandingClient() {
           {error && <p className="text-xs text-red-400">{error}</p>}
           <button
             onClick={joinRoom}
-            className="w-full rounded-xl border border-zinc-700 py-3.5 text-sm font-semibold transition hover:bg-zinc-800 active:scale-95"
+            className="flex w-full items-center justify-center gap-2 rounded-xl border border-zinc-700 py-3.5 text-sm font-semibold transition hover:bg-zinc-800 active:scale-95"
           >
+            <LogIn className="h-4 w-4" />
             Join room
           </button>
         </div>
