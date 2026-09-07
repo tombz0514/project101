@@ -20,24 +20,33 @@ async function fetchIceServers(): Promise<RTCIceServer[]> {
   }
 }
 
-export function useWebRTC({ roomId }: { roomId: string }) {
-  const localVideoRef = useRef<HTMLVideoElement>(null)
-  const remoteVideoRef = useRef<HTMLVideoElement>(null)
-  const peerConnectionRef = useRef<RTCPeerConnection | null>(null)
-  const localStreamRef = useRef<MediaStream | null>(null)
-  const pendingCandidates = useRef<RTCIceCandidateInit[]>([])
-  const iceServersRef = useRef<RTCIceServer[]>(FALLBACK_ICE)
-  const channelRef = useRef<PresenceChannel | null>(null)
-  // flag: subscription_succeeded fired before stream was ready
-  const pendingOfferRef = useRef(false)
+export interface ChatMessage {
+  id: string
+  text: string
+  from: 'me' | 'them'
+  time: Date
+}
 
-  const [isMuted, setIsMuted] = useState(false)
-  const [isCameraOff, setIsCameraOff] = useState(false)
-  const [isConnected, setIsConnected] = useState(false)
+export function useWebRTC({ roomId }: { roomId: string }) {
+  const localVideoRef  = useRef<HTMLVideoElement>(null)
+  const remoteVideoRef = useRef<HTMLVideoElement>(null)
+  const peerConnectionRef  = useRef<RTCPeerConnection | null>(null)
+  const localStreamRef     = useRef<MediaStream | null>(null)
+  const pendingCandidates  = useRef<RTCIceCandidateInit[]>([])
+  const iceServersRef      = useRef<RTCIceServer[]>(FALLBACK_ICE)
+  const channelRef         = useRef<PresenceChannel | null>(null)
+  const pendingOfferRef    = useRef(false)
+  const chatOpenRef        = useRef(false)   // tracks whether chat panel is visible
+
+  const [isMuted,           setIsMuted]           = useState(false)
+  const [isCameraOff,       setIsCameraOff]       = useState(false)
+  const [isConnected,       setIsConnected]       = useState(false)
   const [isRemoteConnected, setIsRemoteConnected] = useState(false)
-  const [isPeerJoined, setIsPeerJoined] = useState(false)
-  const [facingMode, setFacingMode] = useState<'user' | 'environment'>('user')
-  const [mediaError, setMediaError] = useState<string | null>(null)
+  const [isPeerJoined,      setIsPeerJoined]      = useState(false)
+  const [facingMode,        setFacingMode]        = useState<'user' | 'environment'>('user')
+  const [mediaError,        setMediaError]        = useState<string | null>(null)
+  const [messages,          setMessages]          = useState<ChatMessage[]>([])
+  const [unreadCount,       setUnreadCount]       = useState(0)
 
   const getLocalStream = useCallback(async (facing: 'user' | 'environment') => {
     return navigator.mediaDevices.getUserMedia({
@@ -48,7 +57,6 @@ export function useWebRTC({ roomId }: { roomId: string }) {
 
   const createPeerConnection = useCallback((channel: PresenceChannel): RTCPeerConnection => {
     peerConnectionRef.current?.close()
-
     const pc = new RTCPeerConnection({ iceServers: iceServersRef.current })
     peerConnectionRef.current = pc
 
@@ -88,6 +96,29 @@ export function useWebRTC({ roomId }: { roomId: string }) {
     channel.trigger('client-offer', { offer })
   }, [createPeerConnection])
 
+  // ── Chat ──────────────────────────────────────────────────────
+  const sendMessage = useCallback((text: string) => {
+    const trimmed = text.trim()
+    if (!trimmed || !channelRef.current) return
+    channelRef.current.trigger('client-chat', { text: trimmed, sentAt: Date.now() })
+    setMessages(prev => [...prev, {
+      id: crypto.randomUUID(),
+      text: trimmed,
+      from: 'me',
+      time: new Date(),
+    }])
+  }, [])
+
+  const clearUnread = useCallback(() => {
+    chatOpenRef.current = true
+    setUnreadCount(0)
+  }, [])
+
+  const onChatClose = useCallback(() => {
+    chatOpenRef.current = false
+  }, [])
+
+  // ── Main effect ───────────────────────────────────────────────
   useEffect(() => {
     let mounted = true
     const pusher = getPusherClient()
@@ -101,15 +132,10 @@ export function useWebRTC({ roomId }: { roomId: string }) {
           getLocalStream('user'),
           fetchIceServers(),
         ])
-        if (!mounted) {
-          stream.getTracks().forEach((t) => t.stop())
-          return
-        }
+        if (!mounted) { stream.getTracks().forEach((t) => t.stop()); return }
         iceServersRef.current = iceServers
         localStreamRef.current = stream
         if (localVideoRef.current) localVideoRef.current.srcObject = stream
-
-        // subscription_succeeded already fired and flagged us
         if (pendingOfferRef.current && channelRef.current) {
           pendingOfferRef.current = false
           await sendOffer(channelRef.current)
@@ -121,7 +147,6 @@ export function useWebRTC({ roomId }: { roomId: string }) {
 
     init()
 
-    // fires once on join — count includes ourselves
     channel.bind('pusher:subscription_succeeded', async (members: { count: number }) => {
       if (members.count > 2) {
         setMediaError('This room already has 2 people in it.')
@@ -129,22 +154,14 @@ export function useWebRTC({ roomId }: { roomId: string }) {
         return
       }
       if (members.count === 2) {
-        // we're the second to join — we create the offer
         setIsPeerJoined(true)
-        if (localStreamRef.current) {
-          await sendOffer(channel)
-        } else {
-          pendingOfferRef.current = true
-        }
+        if (localStreamRef.current) await sendOffer(channel)
+        else pendingOfferRef.current = true
       }
     })
 
-    // fires on the first person when the second joins
-    channel.bind('pusher:member_added', () => {
-      setIsPeerJoined(true)
-    })
+    channel.bind('pusher:member_added', () => { setIsPeerJoined(true) })
 
-    // fires when the other person leaves
     channel.bind('pusher:member_removed', () => {
       setIsPeerJoined(false)
       setIsRemoteConnected(false)
@@ -159,9 +176,7 @@ export function useWebRTC({ roomId }: { roomId: string }) {
       setIsPeerJoined(true)
       const pc = createPeerConnection(channel)
       await pc.setRemoteDescription(new RTCSessionDescription(offer))
-      for (const c of pendingCandidates.current) {
-        await pc.addIceCandidate(new RTCIceCandidate(c))
-      }
+      for (const c of pendingCandidates.current) await pc.addIceCandidate(new RTCIceCandidate(c))
       pendingCandidates.current = []
       const answer = await pc.createAnswer()
       await pc.setLocalDescription(answer)
@@ -171,9 +186,7 @@ export function useWebRTC({ roomId }: { roomId: string }) {
     channel.bind('client-answer', async ({ answer }: { answer: RTCSessionDescriptionInit }) => {
       if (peerConnectionRef.current) {
         await peerConnectionRef.current.setRemoteDescription(new RTCSessionDescription(answer))
-        for (const c of pendingCandidates.current) {
-          await peerConnectionRef.current.addIceCandidate(new RTCIceCandidate(c))
-        }
+        for (const c of pendingCandidates.current) await peerConnectionRef.current.addIceCandidate(new RTCIceCandidate(c))
         pendingCandidates.current = []
       }
     })
@@ -185,6 +198,17 @@ export function useWebRTC({ roomId }: { roomId: string }) {
       } else {
         pendingCandidates.current.push(candidate)
       }
+    })
+
+    // incoming chat message
+    channel.bind('client-chat', ({ text, sentAt }: { text: string; sentAt: number }) => {
+      setMessages(prev => [...prev, {
+        id: crypto.randomUUID(),
+        text,
+        from: 'them',
+        time: new Date(sentAt),
+      }])
+      if (!chatOpenRef.current) setUnreadCount(c => c + 1)
     })
 
     return () => {
@@ -225,16 +249,10 @@ export function useWebRTC({ roomId }: { roomId: string }) {
   }, [facingMode, getLocalStream])
 
   return {
-    localVideoRef,
-    remoteVideoRef,
-    isMuted,
-    isCameraOff,
-    isConnected,
-    isRemoteConnected,
-    isPeerJoined,
+    localVideoRef, remoteVideoRef,
+    isMuted, isCameraOff, isConnected, isRemoteConnected, isPeerJoined,
     mediaError,
-    toggleMute,
-    toggleCamera,
-    flipCamera,
+    toggleMute, toggleCamera, flipCamera,
+    messages, unreadCount, sendMessage, clearUnread, onChatClose,
   }
 }

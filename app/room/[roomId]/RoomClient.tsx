@@ -12,9 +12,11 @@ import {
   Check,
   Wifi, WifiOff,
   ArrowLeftRight,
+  MessageCircle,
 } from 'lucide-react'
 import { destroyPusherClient } from '@/lib/pusher-client'
 import { useWebRTC } from '@/hooks/useWebRTC'
+import ChatPanel from '@/components/ChatPanel'
 
 interface Props { roomId: string }
 
@@ -38,13 +40,26 @@ export default function RoomClient({ roomId }: Props) {
 
   useEffect(() => () => { destroyPusherClient() }, [])
 
+  const [chatOpen, setChatOpen] = useState(false)
+
   const {
     localVideoRef, remoteVideoRef,
     isMuted, isCameraOff,
     isConnected, isRemoteConnected, isPeerJoined,
     mediaError,
     toggleMute, toggleCamera, flipCamera,
+    messages, unreadCount, sendMessage, clearUnread, onChatClose,
   } = useWebRTC({ roomId })
+
+  const openChat = useCallback(() => {
+    setChatOpen(true)
+    clearUnread()
+  }, [clearUnread])
+
+  const closeChat = useCallback(() => {
+    setChatOpen(false)
+    onChatClose()
+  }, [onChatClose])
 
   const copyLink = useCallback(async () => {
     await navigator.clipboard.writeText(roomUrl).catch(() => {})
@@ -205,12 +220,31 @@ export default function RoomClient({ roomId }: Props) {
         )}
       </div>
 
+      {/* Chat panel */}
+      {chatOpen && (
+        <ChatPanel
+          messages={messages}
+          isPeerJoined={isPeerJoined}
+          onSend={sendMessage}
+          onClose={closeChat}
+        />
+      )}
+
       {/* Controls */}
       <div className="relative z-10 flex items-center justify-center gap-4 bg-zinc-900/95 px-6 py-5 backdrop-blur-sm safe-area-pb">
         <ControlButton onClick={toggleMute}   active={isMuted}     label={isMuted    ? 'Unmute'       : 'Mute'}         icon={isMuted    ? <MicOff className="h-5 w-5" />   : <Mic className="h-5 w-5" />} />
         <ControlButton onClick={toggleCamera} active={isCameraOff} label={isCameraOff? 'Start camera' : 'Stop camera'} icon={isCameraOff? <VideoOff className="h-5 w-5" /> : <Video className="h-5 w-5" />} />
         <ControlButton onClick={() => { setSwapped(s => !s); setPipPos(null) }} label="Swap view" icon={<ArrowLeftRight className="h-5 w-5" />} />
         <ControlButton onClick={flipCamera} label="Flip camera" icon={<FlipHorizontal2 className="h-5 w-5" />} />
+        {/* Chat button with unread badge */}
+        <div className="relative">
+          <ControlButton onClick={openChat} label="Chat" icon={<MessageCircle className="h-5 w-5" />} />
+          {unreadCount > 0 && (
+            <span className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full bg-violet-500 text-[10px] font-bold text-white">
+              {unreadCount > 9 ? '9+' : unreadCount}
+            </span>
+          )}
+        </div>
         <button onClick={endCall} aria-label="End call"
           className="flex h-14 w-14 items-center justify-center rounded-full bg-red-600 shadow-lg transition hover:bg-red-500 active:scale-95">
           <PhoneOff className="h-6 w-6 text-white" />
