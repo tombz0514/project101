@@ -31,7 +31,15 @@ export default function ChatPanel({ messages, isPeerJoined, onSend, onClose }: P
   }
 
   return (
-    <div className="absolute inset-y-0 right-0 z-50 flex w-72 flex-col bg-zinc-900 border-l border-white/10 shadow-2xl sm:w-80">
+    /*
+     * Mobile: fixed + 100dvh so the panel shrinks when the keyboard opens,
+     *   keeping the input above the keyboard at all times.
+     * sm+: absolute right sidebar that sits inside the call container.
+     */
+    <div
+      className="fixed inset-x-0 bottom-0 z-50 flex flex-col bg-zinc-900 border-t border-white/10 shadow-2xl sm:absolute sm:inset-y-0 sm:inset-x-auto sm:right-0 sm:w-80 sm:border-t-0 sm:border-l"
+      style={{ height: '100dvh' }}
+    >
       {/* Header */}
       <div className="flex items-center justify-between border-b border-white/10 px-4 py-3">
         <span className="font-semibold text-white">Chat</span>
