@@ -31,7 +31,7 @@ export default function ChatPanel({ messages, isPeerJoined, onSend, onClose }: P
   }
 
   return (
-    <div className="absolute inset-0 z-50 flex flex-col bg-zinc-950/95 backdrop-blur-sm">
+    <div className="absolute inset-x-0 bottom-0 z-50 flex flex-col bg-zinc-900 border-t border-white/10" style={{ height: '50%' }}>
       {/* Header */}
       <div className="flex items-center justify-between border-b border-white/10 px-4 py-3">
         <span className="font-semibold text-white">Chat</span>
