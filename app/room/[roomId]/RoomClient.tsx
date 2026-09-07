@@ -125,7 +125,7 @@ export default function RoomClient({ roomId }: Props) {
 
   return (
     <div className="relative flex flex-1 flex-col bg-black">
-      <div ref={containerRef} className="relative flex-1 overflow-hidden bg-zinc-950">
+      <div ref={containerRef} className={`relative overflow-hidden bg-zinc-950 sm:flex-1 ${chatOpen ? 'h-[55%] sm:h-auto' : 'flex-1'}`}>
 
         {/* ── Remote video container ── */}
         <div
