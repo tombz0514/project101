@@ -31,7 +31,7 @@ export default function ChatPanel({ messages, isPeerJoined, onSend, onClose }: P
   }
 
   return (
-    <div className="absolute inset-y-0 left-0 z-50 flex w-72 flex-col bg-zinc-900 border-r border-white/10 shadow-2xl sm:w-80">
+    <div className="absolute inset-y-0 right-0 z-50 flex w-72 flex-col bg-zinc-900 border-l border-white/10 shadow-2xl sm:w-80">
       {/* Header */}
       <div className="flex items-center justify-between border-b border-white/10 px-4 py-3">
         <span className="font-semibold text-white">Chat</span>
