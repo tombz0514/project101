@@ -125,7 +125,10 @@ export default function RoomClient({ roomId }: Props) {
 
   return (
     <div className="relative flex flex-1 flex-col bg-black">
-      <div ref={containerRef} className={`relative overflow-hidden bg-zinc-950 sm:flex-1 ${chatOpen ? 'h-[55%] sm:h-auto' : 'flex-1'}`}>
+      {/* Video + Chat: side-by-side row — both visible at the same time */}
+      <div className="relative flex flex-1 min-h-0">
+
+        <div ref={containerRef} className="relative flex-1 min-w-0 overflow-hidden bg-zinc-950">
 
         {/* ── Remote video container ── */}
         <div
@@ -220,15 +223,17 @@ export default function RoomClient({ roomId }: Props) {
         )}
       </div>
 
-      {/* Chat panel */}
-      {chatOpen && (
-        <ChatPanel
-          messages={messages}
-          isPeerJoined={isPeerJoined}
-          onSend={sendMessage}
-          onClose={closeChat}
-        />
-      )}
+        {/* Chat panel — right column in the flex-row wrapper */}
+        {chatOpen && (
+          <ChatPanel
+            messages={messages}
+            isPeerJoined={isPeerJoined}
+            onSend={sendMessage}
+            onClose={closeChat}
+          />
+        )}
+
+      </div>{/* end flex-row wrapper */}
 
       {/* Controls */}
       <div className="relative z-10 flex items-center justify-center gap-4 bg-zinc-900/95 px-6 py-5 backdrop-blur-sm safe-area-pb">

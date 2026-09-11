@@ -32,10 +32,10 @@ export default function ChatPanel({ messages, isPeerJoined, onSend, onClose }: P
 
   return (
     /*
-     * Mobile: in-flow flex child — video stays visible above, chat below.
-     * sm+: absolute right sidebar.
+     * Mobile: fixed-width right column in the flex-row — video visible on left.
+     * sm+: absolute right sidebar overlay.
      */
-    <div className="flex flex-1 flex-col overflow-hidden bg-zinc-900 border-t border-white/10 sm:absolute sm:inset-y-0 sm:right-0 sm:z-50 sm:w-80 sm:border-t-0 sm:border-l sm:shadow-2xl">
+    <div className="flex w-[52%] shrink-0 flex-col overflow-hidden bg-zinc-900 border-l border-white/10 sm:absolute sm:inset-y-0 sm:right-0 sm:z-50 sm:w-80 sm:shadow-2xl">
       {/* Header */}
       <div className="flex items-center justify-between border-b border-white/10 px-4 py-3">
         <span className="font-semibold text-white">Chat</span>
@@ -46,7 +46,7 @@ export default function ChatPanel({ messages, isPeerJoined, onSend, onClose }: P
       </div>
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto px-4 py-3 space-y-2">
+      <div className="flex-1 min-h-0 overflow-y-auto px-4 py-3 space-y-2">
         {!isPeerJoined && (
           <p className="mt-10 text-center text-sm text-zinc-500">No one else is here yet.</p>
         )}
