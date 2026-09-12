@@ -49,6 +49,7 @@ export default function RoomClient({ roomId }: Props) {
     mediaError,
     toggleMute, toggleCamera, flipCamera,
     messages, unreadCount, sendMessage, clearUnread, onChatClose,
+    callQuality, peerReadAt,
   } = useWebRTC({ roomId })
 
   const openChat = useCallback(() => {
@@ -212,13 +213,24 @@ export default function RoomClient({ roomId }: Props) {
           </div>
         )}
 
-        {/* Connection badge */}
+        {/* Connection / quality badge */}
         {isRemoteConnected && (
-          <div className="absolute left-3 top-3 z-20 flex items-center gap-1.5 rounded-full bg-black/50 px-3 py-1 text-xs backdrop-blur-sm">
-            {isConnected
-              ? <Wifi className="h-3 w-3 text-green-400" />
-              : <WifiOff className="h-3 w-3 animate-pulse text-yellow-400" />}
-            <span className="text-white/80">{isConnected ? 'Connected' : 'Reconnecting…'}</span>
+          <div className={`absolute left-3 top-3 z-20 flex items-center gap-1.5 rounded-full px-3 py-1 text-xs backdrop-blur-sm ${
+            !isConnected           ? 'bg-black/50' :
+            callQuality === 'poor' ? 'bg-red-900/70' :
+            callQuality === 'fair' ? 'bg-yellow-900/70' : 'bg-black/50'
+          }`}>
+            {!isConnected
+              ? <WifiOff className="h-3 w-3 animate-pulse text-yellow-400" />
+              : callQuality === 'poor'
+                ? <WifiOff className="h-3 w-3 text-red-400" />
+                : <Wifi className={`h-3 w-3 ${callQuality === 'fair' ? 'text-yellow-400' : 'text-green-400'}`} />
+            }
+            <span className="text-white/80">
+              {!isConnected        ? 'Reconnecting…'  :
+               callQuality === 'poor' ? 'Poor connection' :
+               callQuality === 'fair' ? 'Slow connection' : 'Connected'}
+            </span>
           </div>
         )}
       </div>
@@ -228,6 +240,7 @@ export default function RoomClient({ roomId }: Props) {
           <ChatPanel
             messages={messages}
             isPeerJoined={isPeerJoined}
+            peerReadAt={peerReadAt}
             onSend={sendMessage}
             onClose={closeChat}
           />

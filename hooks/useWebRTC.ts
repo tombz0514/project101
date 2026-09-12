@@ -27,16 +27,21 @@ export interface ChatMessage {
   time: Date
 }
 
+export type CallQuality = 'good' | 'fair' | 'poor' | 'unknown'
+
+type StatsSnap = { bytes: number; lost: number; received: number; ts: number }
+
 export function useWebRTC({ roomId }: { roomId: string }) {
-  const localVideoRef  = useRef<HTMLVideoElement>(null)
-  const remoteVideoRef = useRef<HTMLVideoElement>(null)
+  const localVideoRef      = useRef<HTMLVideoElement>(null)
+  const remoteVideoRef     = useRef<HTMLVideoElement>(null)
   const peerConnectionRef  = useRef<RTCPeerConnection | null>(null)
   const localStreamRef     = useRef<MediaStream | null>(null)
   const pendingCandidates  = useRef<RTCIceCandidateInit[]>([])
   const iceServersRef      = useRef<RTCIceServer[]>(FALLBACK_ICE)
   const channelRef         = useRef<PresenceChannel | null>(null)
   const pendingOfferRef    = useRef(false)
-  const chatOpenRef        = useRef(false)   // tracks whether chat panel is visible
+  const chatOpenRef        = useRef(false)
+  const prevStatsRef       = useRef<StatsSnap | null>(null)
 
   const [isMuted,           setIsMuted]           = useState(false)
   const [isCameraOff,       setIsCameraOff]       = useState(false)
@@ -47,6 +52,8 @@ export function useWebRTC({ roomId }: { roomId: string }) {
   const [mediaError,        setMediaError]        = useState<string | null>(null)
   const [messages,          setMessages]          = useState<ChatMessage[]>([])
   const [unreadCount,       setUnreadCount]       = useState(0)
+  const [callQuality,       setCallQuality]       = useState<CallQuality>('unknown')
+  const [peerReadAt,        setPeerReadAt]        = useState<number | null>(null)
 
   const getLocalStream = useCallback(async (facing: 'user' | 'environment') => {
     return navigator.mediaDevices.getUserMedia({
@@ -83,6 +90,8 @@ export function useWebRTC({ roomId }: { roomId: string }) {
       if (state === 'disconnected' || state === 'failed' || state === 'closed') {
         setIsConnected(false)
         setIsRemoteConnected(false)
+        setCallQuality('unknown')
+        prevStatsRef.current = null
       }
     }
 
@@ -96,22 +105,90 @@ export function useWebRTC({ roomId }: { roomId: string }) {
     channel.trigger('client-offer', { offer })
   }, [createPeerConnection])
 
+  // ── Call quality monitoring (polls every 3 s) ─────────────────
+  useEffect(() => {
+    if (!isConnected) return
+
+    const interval = setInterval(async () => {
+      const pc = peerConnectionRef.current
+      if (!pc || pc.connectionState !== 'connected') return
+
+      const stats = await pc.getStats()
+      let totalBytes = 0, totalLost = 0, totalReceived = 0
+
+      stats.forEach((report) => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const r = report as any
+        if (r.type === 'inbound-rtp' && r.kind === 'video') {
+          totalBytes    += r.bytesReceived   ?? 0
+          totalLost     += r.packetsLost     ?? 0
+          totalReceived += r.packetsReceived ?? 0
+        }
+      })
+
+      const now  = Date.now()
+      const prev = prevStatsRef.current
+
+      if (prev) {
+        const dt    = (now - prev.ts) / 1000
+        const kbps  = dt > 0 ? ((totalBytes - prev.bytes) * 8) / dt / 1000 : 0
+        const dLost = totalLost - prev.lost
+        const dRecv = totalReceived - prev.received
+        const loss  = (dLost + dRecv) > 0 ? dLost / (dLost + dRecv) : 0
+
+        setCallQuality(
+          (loss > 0.1  || kbps < 80)  ? 'poor' :
+          (loss > 0.03 || kbps < 300) ? 'fair' : 'good'
+        )
+      }
+
+      prevStatsRef.current = { bytes: totalBytes, lost: totalLost, received: totalReceived, ts: now }
+    }, 3000)
+
+    return () => {
+      clearInterval(interval)
+      setCallQuality('unknown')
+      prevStatsRef.current = null
+    }
+  }, [isConnected])
+
+  // ── Adaptive bitrate + resolution when quality changes ────────
+  useEffect(() => {
+    if (!isConnected || callQuality === 'unknown') return
+
+    const pc     = peerConnectionRef.current
+    const sender = pc?.getSenders().find(s => s.track?.kind === 'video')
+    if (sender) {
+      const params = sender.getParameters()
+      if (!params.encodings?.length) params.encodings = [{}]
+      params.encodings[0].maxBitrate =
+        callQuality === 'poor' ? 150_000 :
+        callQuality === 'fair' ? 500_000 : 1_500_000
+      sender.setParameters(params).catch(() => {})
+    }
+
+    const track = localStreamRef.current?.getVideoTracks()[0]
+    if (track) {
+      const c = callQuality === 'poor'
+        ? { width: { max: 480 }, height: { max: 360 }, frameRate: { max: 15 } }
+        : { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { max: 30 } }
+      track.applyConstraints(c).catch(() => {})
+    }
+  }, [callQuality, isConnected])
+
   // ── Chat ──────────────────────────────────────────────────────
   const sendMessage = useCallback((text: string) => {
     const trimmed = text.trim()
     if (!trimmed || !channelRef.current) return
-    channelRef.current.trigger('client-chat', { text: trimmed, sentAt: Date.now() })
-    setMessages(prev => [...prev, {
-      id: crypto.randomUUID(),
-      text: trimmed,
-      from: 'me',
-      time: new Date(),
-    }])
+    const id = crypto.randomUUID()
+    channelRef.current.trigger('client-chat', { id, text: trimmed, sentAt: Date.now() })
+    setMessages(prev => [...prev, { id, text: trimmed, from: 'me', time: new Date() }])
   }, [])
 
   const clearUnread = useCallback(() => {
     chatOpenRef.current = true
     setUnreadCount(0)
+    channelRef.current?.trigger('client-read', { at: Date.now() })
   }, [])
 
   const onChatClose = useCallback(() => {
@@ -166,6 +243,8 @@ export function useWebRTC({ roomId }: { roomId: string }) {
       setIsPeerJoined(false)
       setIsRemoteConnected(false)
       setIsConnected(false)
+      setCallQuality('unknown')
+      prevStatsRef.current = null
       if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null
       peerConnectionRef.current?.close()
       peerConnectionRef.current = null
@@ -200,15 +279,18 @@ export function useWebRTC({ roomId }: { roomId: string }) {
       }
     })
 
-    // incoming chat message
-    channel.bind('client-chat', ({ text, sentAt }: { text: string; sentAt: number }) => {
+    channel.bind('client-chat', ({ id, text, sentAt }: { id?: string; text: string; sentAt: number }) => {
       setMessages(prev => [...prev, {
-        id: crypto.randomUUID(),
+        id: id ?? crypto.randomUUID(),
         text,
         from: 'them',
         time: new Date(sentAt),
       }])
       if (!chatOpenRef.current) setUnreadCount(c => c + 1)
+    })
+
+    channel.bind('client-read', ({ at }: { at: number }) => {
+      setPeerReadAt(at)
     })
 
     return () => {
@@ -254,5 +336,6 @@ export function useWebRTC({ roomId }: { roomId: string }) {
     mediaError,
     toggleMute, toggleCamera, flipCamera,
     messages, unreadCount, sendMessage, clearUnread, onChatClose,
+    callQuality, peerReadAt,
   }
 }
