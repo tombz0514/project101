@@ -65,7 +65,7 @@ export default function ChatPanel({ messages, isPeerJoined, peerReadAt, onSend, 
   }
 
   return (
-    <div className="flex w-[52%] shrink-0 flex-col overflow-hidden bg-zinc-900 border-l border-white/10 sm:absolute sm:inset-y-0 sm:right-0 sm:z-50 sm:w-80 sm:shadow-2xl">
+    <div className="flex h-full w-[52%] shrink-0 flex-col overflow-hidden bg-zinc-900 border-l border-white/10 sm:absolute sm:inset-y-0 sm:right-0 sm:z-50 sm:w-80 sm:shadow-2xl">
 
       {/* Header */}
       <div className="flex items-center justify-between border-b border-white/10 px-4 py-3 shrink-0">

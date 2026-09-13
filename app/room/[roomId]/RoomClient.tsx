@@ -125,7 +125,7 @@ export default function RoomClient({ roomId }: Props) {
   const remoteIsPip =  swapped
 
   return (
-    <div className="relative flex flex-1 flex-col bg-black">
+    <div className="relative flex h-dvh flex-col bg-black overflow-hidden">
       {/* Video + Chat: side-by-side row — both visible at the same time */}
       <div className="relative flex flex-1 min-h-0 overflow-hidden">
 
