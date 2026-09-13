@@ -127,7 +127,7 @@ export default function RoomClient({ roomId }: Props) {
   return (
     <div className="relative flex flex-1 flex-col bg-black">
       {/* Video + Chat: side-by-side row — both visible at the same time */}
-      <div className="relative flex flex-1 min-h-0">
+      <div className="relative flex flex-1 min-h-0 overflow-hidden">
 
         <div ref={containerRef} className="relative flex-1 min-w-0 overflow-hidden bg-zinc-950">
 

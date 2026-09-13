@@ -18,8 +18,8 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: LayoutProps<'/'>) {
   return (
-    <html lang="en" className={`${geist.variable} h-full`}>
-      <body className="min-h-full flex flex-col bg-zinc-950 text-white antialiased">
+    <html lang="en" className={`${geist.variable} h-dvh`}>
+      <body className="h-full overflow-hidden flex flex-col bg-zinc-950 text-white antialiased">
         {children}
       </body>
     </html>
