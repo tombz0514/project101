@@ -50,6 +50,7 @@ export default function RoomClient({ roomId }: Props) {
     toggleMute, toggleCamera, flipCamera,
     messages, unreadCount, sendMessage, clearUnread, onChatClose,
     callQuality, peerReadAt,
+    connectTimeout, reconnect,
   } = useWebRTC({ roomId })
 
   const openChat = useCallback(() => {
@@ -207,9 +208,24 @@ export default function RoomClient({ roomId }: Props) {
 
         {/* Connecting spinner */}
         {isPeerJoined && !isRemoteConnected && (
-          <div className="absolute inset-0 z-30 flex flex-col items-center justify-center gap-3 bg-zinc-900/80">
+          <div className="absolute inset-0 z-30 flex flex-col items-center justify-center gap-4 bg-zinc-900/80 px-6">
             <div className="h-10 w-10 animate-spin rounded-full border-4 border-zinc-600 border-t-violet-400" />
-            <p className="text-sm text-zinc-300">Connecting…</p>
+            <p className="text-sm text-zinc-300">
+              {connectTimeout ? 'Taking longer than usual…' : 'Connecting…'}
+            </p>
+            {connectTimeout && (
+              <button
+                onClick={reconnect}
+                className="rounded-xl bg-violet-600 px-6 py-2.5 text-sm font-semibold transition hover:bg-violet-500 active:scale-95"
+              >
+                Retry connection
+              </button>
+            )}
+            {connectTimeout && (
+              <p className="text-center text-xs text-zinc-500">
+                Mobile data / CGNAT detected — tap retry to re-negotiate the connection
+              </p>
+            )}
           </div>
         )}
 

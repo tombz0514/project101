@@ -9,15 +9,33 @@ const FALLBACK_ICE: RTCIceServer[] = [
   { urls: 'stun:stun1.l.google.com:19302' },
 ]
 
+const ICE_CACHE_KEY = 'iceServers_v1'
+const ICE_CACHE_TTL = 50 * 60 * 1000 // 50 min (Metered creds last 1 h)
+
 async function fetchIceServers(): Promise<RTCIceServer[]> {
+  // Return cached credentials if still fresh — avoids failing on slow connections
   try {
-    const res = await fetch('/api/turn')
+    const raw = localStorage.getItem(ICE_CACHE_KEY)
+    if (raw) {
+      const { servers, ts } = JSON.parse(raw) as { servers: RTCIceServer[]; ts: number }
+      if (Date.now() - ts < ICE_CACHE_TTL && servers.length > 0) return servers
+    }
+  } catch { /* ignore */ }
+
+  try {
+    const ctrl = new AbortController()
+    const tid  = setTimeout(() => ctrl.abort(), 8000) // 8 s timeout for slow data
+    const res  = await fetch('/api/turn', { signal: ctrl.signal })
+    clearTimeout(tid)
     if (!res.ok) return FALLBACK_ICE
     const servers = (await res.json()) as RTCIceServer[]
-    return servers.length > 0 ? servers : FALLBACK_ICE
-  } catch {
-    return FALLBACK_ICE
-  }
+    if (servers.length > 0) {
+      try { localStorage.setItem(ICE_CACHE_KEY, JSON.stringify({ servers, ts: Date.now() })) } catch { /* ignore */ }
+      return servers
+    }
+  } catch { /* timeout or network error → use fallback */ }
+
+  return FALLBACK_ICE
 }
 
 export interface ChatMessage {
@@ -54,6 +72,7 @@ export function useWebRTC({ roomId }: { roomId: string }) {
   const [unreadCount,       setUnreadCount]       = useState(0)
   const [callQuality,       setCallQuality]       = useState<CallQuality>('unknown')
   const [peerReadAt,        setPeerReadAt]        = useState<number | null>(null)
+  const [connectTimeout,    setConnectTimeout]    = useState(false)
 
   const getLocalStream = useCallback(async (facing: 'user' | 'environment') => {
     return navigator.mediaDevices.getUserMedia({
@@ -64,7 +83,12 @@ export function useWebRTC({ roomId }: { roomId: string }) {
 
   const createPeerConnection = useCallback((channel: PresenceChannel): RTCPeerConnection => {
     peerConnectionRef.current?.close()
-    const pc = new RTCPeerConnection({ iceServers: iceServersRef.current })
+    const pc = new RTCPeerConnection({
+      iceServers: iceServersRef.current,
+      iceCandidatePoolSize: 4,   // pre-gather candidates before offer/answer
+      bundlePolicy: 'max-bundle', // single transport for all tracks — fewer TURN allocations
+      rtcpMuxPolicy: 'require',  // mux RTCP with RTP — halves port usage on mobile NAT
+    })
     peerConnectionRef.current = pc
 
     localStreamRef.current?.getTracks().forEach((track) => {
@@ -104,6 +128,18 @@ export function useWebRTC({ roomId }: { roomId: string }) {
     await pc.setLocalDescription(offer)
     channel.trigger('client-offer', { offer })
   }, [createPeerConnection])
+
+  // ── Connect-timeout: show retry button after 20 s of ICE stall ─
+  useEffect(() => {
+    if (!isPeerJoined || isRemoteConnected) return
+    const t = setTimeout(() => setConnectTimeout(true), 20_000)
+    return () => { clearTimeout(t); setConnectTimeout(false) }
+  }, [isPeerJoined, isRemoteConnected])
+
+  const reconnect = useCallback(async () => {
+    setConnectTimeout(false)
+    if (channelRef.current) await sendOffer(channelRef.current)
+  }, [sendOffer])
 
   // ── Call quality monitoring (polls every 3 s) ─────────────────
   useEffect(() => {
@@ -337,5 +373,6 @@ export function useWebRTC({ roomId }: { roomId: string }) {
     toggleMute, toggleCamera, flipCamera,
     messages, unreadCount, sendMessage, clearUnread, onChatClose,
     callQuality, peerReadAt,
+    connectTimeout, reconnect,
   }
 }
