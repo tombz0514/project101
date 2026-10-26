@@ -8,9 +8,11 @@ export async function GET() {
     return NextResponse.json({ error: 'TURN not configured' }, { status: 500 })
   }
 
+  // Never cache here: a cached response can outlive the TURN credentials it holds.
+  // The client caches them for 50 min and retries with a fresh fetch when needed.
   const res = await fetch(
     `https://${appUrl}/api/v1/turn/credentials?apiKey=${apiKey}`,
-    { next: { revalidate: 3600 } }, // cache credentials for 1 hour
+    { cache: 'no-store' },
   )
 
   if (!res.ok) {

@@ -12,20 +12,23 @@ const FALLBACK_ICE: RTCIceServer[] = [
 const ICE_CACHE_KEY = 'iceServers_v1'
 const ICE_CACHE_TTL = 50 * 60 * 1000 // 50 min (Metered creds last 1 h)
 
-async function fetchIceServers(): Promise<RTCIceServer[]> {
-  // Return cached credentials if still fresh — avoids failing on slow connections
-  try {
-    const raw = localStorage.getItem(ICE_CACHE_KEY)
-    if (raw) {
-      const { servers, ts } = JSON.parse(raw) as { servers: RTCIceServer[]; ts: number }
-      if (Date.now() - ts < ICE_CACHE_TTL && servers.length > 0) return servers
-    }
-  } catch { /* ignore */ }
+async function fetchIceServers(force = false): Promise<RTCIceServer[]> {
+  // Return cached credentials if still fresh — avoids failing on slow connections.
+  // `force` skips the cache (used on retry, when the cached creds may have gone stale).
+  if (!force) {
+    try {
+      const raw = localStorage.getItem(ICE_CACHE_KEY)
+      if (raw) {
+        const { servers, ts } = JSON.parse(raw) as { servers: RTCIceServer[]; ts: number }
+        if (Date.now() - ts < ICE_CACHE_TTL && servers.length > 0) return servers
+      }
+    } catch { /* ignore */ }
+  }
 
   try {
     const ctrl = new AbortController()
     const tid  = setTimeout(() => ctrl.abort(), 8000) // 8 s timeout for slow data
-    const res  = await fetch('/api/turn', { signal: ctrl.signal })
+    const res  = await fetch('/api/turn', { signal: ctrl.signal, cache: 'no-store' })
     clearTimeout(tid)
     if (!res.ok) return FALLBACK_ICE
     const servers = (await res.json()) as RTCIceServer[]
@@ -138,6 +141,9 @@ export function useWebRTC({ roomId }: { roomId: string }) {
 
   const reconnect = useCallback(async () => {
     setConnectTimeout(false)
+    // Fetch fresh TURN credentials: the first join may have fallen back to STUN-only
+    // or used creds that have since expired, and STUN alone rarely gets through CGNAT.
+    iceServersRef.current = await fetchIceServers(true)
     if (channelRef.current) await sendOffer(channelRef.current)
   }, [sendOffer])
 
